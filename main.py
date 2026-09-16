@@ -21,6 +21,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Root route to prevent 502/Failed to respond error on root URL
+@app.get("/")
+def read_root():
+    return {"status": "online", "message": "Zynora Backend is running successfully!"}
+
 # Initialize Single Groq Client
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -161,14 +166,12 @@ def redeem_code(req: RedeemRequest, request: Request):
 def get_sessions():
     with Session(engine) as db_session:
         sessions = db_session.exec(select(ChatSession)).all()
-        # Frontend ke liye 'id' key return ki hai taaki match ho sakay
         return [{"id": s.session_id, "title": s.title} for s in sessions[::-1]]
 
 @app.get("/sessions/{session_id}")
 def get_session_messages(session_id: str):
     with Session(engine) as db_session:
         messages = db_session.exec(select(ChatMessage).where(ChatMessage.session_id == session_id)).all()
-        # Frontend role ko 'user' aur 'assistant' expect karta hai
         formatted_msgs = []
         for m in messages:
             r = "user" if m.role == "user" else "assistant"
@@ -189,3 +192,8 @@ def delete_session(session_id: str):
             return {"success": True, "message": "Session successfully deleted"}
         else:
             raise HTTPException(status_code=404, detail="Session not found")
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
