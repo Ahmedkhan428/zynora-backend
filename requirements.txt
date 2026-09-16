@@ -4,3 +4,4 @@ groq
 pydantic
 sqlalchemy
 python-dotenv
+sqlmodel
