@@ -34,12 +34,16 @@ DATABASE_URL = "sqlite:///./zynora.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 class ChatSession(SQLModel, table=True):
+    __table_args__ = {'extend_existing': True}
+    
     session_id: str = Field(primary_key=True)
     title: str
 
 class ChatMessage(SQLModel, table=True):
+    __table_args__ = {'extend_existing': True}
+    
     id: Optional[int] = Field(default=None, primary_key=True)
-    session_id: str
+    session_id: str = Field(foreign_key="chatsession.session_id")
     role: str
     content: str
     image: Optional[str] = None
