@@ -1,30 +1,31 @@
-from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from database import get_db, Message
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
 
-app = FastAPI()
+SQLALCHEMY_DATABASE_URL = "sqlite:///./zynora.db"
 
-# CORS setup taaki frontend connect ho sake
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
 
-# 1. Message save karne ka route (user_id ke sath)
-@app.post("/chat")
-def save_message(user_id: str, role: str, content: str, db: Session = Depends(get_db)):
-    db_message = Message(user_id=user_id, role=role, content=content)
-    db.add(db_message)
-    db.commit()
-    db.refresh(db_message)
-    return {"status": "success"}
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-# 2. Sirf usi user ki chat history lane ka route
-@app.get("/history/{user_id}")
-def get_chat_history(user_id: str, db: Session = Depends(get_db)):
-    messages = db.query(Message).filter(Message.user_id == user_id).all()
-    return messages
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    role = Column(String)         # "user" ya "ai"
+    content = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
