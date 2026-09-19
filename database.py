@@ -16,7 +16,8 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    role = Column(String)          # "user" ya "ai"
+    user_id = Column(String, index=True)  # <-- Yeh naya column add kiya hai
+    role = Column(String)         # "user" ya "ai"
     content = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
