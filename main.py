@@ -22,7 +22,7 @@ groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Pydantic model for JSON request body from frontend
 class ChatRequest(BaseModel):
-    user_id: str
+    user_id: str = "default_user"
     message: str
 
 @app.post("/chat")
@@ -30,8 +30,8 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     user_id = request.user_id
     message = request.message
 
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id is required")
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
     
     # User message save karein
     user_msg = Message(user_id=user_id, role="user", content=message)
@@ -54,6 +54,15 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     db.commit()
 
     return {"response": ai_response}
+
+@app.get("/sessions")
+def get_sessions(db: Session = Depends(get_db)):
+    # Sabhi unique user_ids fetch karein sessions list ke liye
+    try:
+        users = db.query(Message.user_id).distinct().all()
+        return [{"user_id": u[0]} for u in users if u[0]]
+    except Exception as e:
+        return []
 
 @app.get("/history/{user_id}")
 def get_chat_history(user_id: str, db: Session = Depends(get_db)):
