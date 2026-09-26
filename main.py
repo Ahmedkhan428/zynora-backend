@@ -3,9 +3,8 @@ import base64
 import binascii
 from datetime import datetime, timedelta
 from pathlib import Path
-from uuid import UUID
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -41,16 +40,9 @@ USAGE_WINDOW = timedelta(hours=24)
 
 async def get_chat_owner(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    device_id: str | None = Header(default=None, alias="X-Device-ID"),
-) -> tuple[str, str]:
+) -> str:
     if credentials is None:
         raise HTTPException(status_code=401, detail="Sign in to access chat history")
-    if not device_id:
-        raise HTTPException(status_code=400, detail="A device ID is required")
-    try:
-        normalized_device_id = str(UUID(device_id))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="The device ID is invalid") from None
 
     try:
         async with httpx.AsyncClient(timeout=8) as auth_client:
@@ -73,7 +65,7 @@ async def get_chat_owner(
         owner_id = response.json()["id"]
     except (ValueError, KeyError, TypeError):
         raise HTTPException(status_code=401, detail="Could not verify your account") from None
-    return str(owner_id), normalized_device_id
+    return str(owner_id)
 
 class ChatRequest(BaseModel):
     chat_id: str
@@ -110,10 +102,10 @@ def get_usage_snapshot(db, owner_id: str) -> dict:
     }
 
 @app.get("/usage")
-async def get_usage(owner: tuple[str, str] = Depends(get_chat_owner)):
+async def get_usage(owner: str = Depends(get_chat_owner)):
     db = SessionLocal()
     try:
-        return get_usage_snapshot(db, owner[0])
+        return get_usage_snapshot(db, owner)
     except Exception as e:
         print("Usage Error:", str(e))
         raise HTTPException(status_code=500, detail="Could not load usage") from e
@@ -121,7 +113,7 @@ async def get_usage(owner: tuple[str, str] = Depends(get_chat_owner)):
         db.close()
 
 @app.post("/chat")
-async def chat_endpoint(data: ChatRequest, owner: tuple[str, str] = Depends(get_chat_owner)):
+async def chat_endpoint(data: ChatRequest, owner: str = Depends(get_chat_owner)):
     if client is None:
         raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured")
     if not data.message.strip() and not data.image_data:
@@ -147,7 +139,7 @@ async def chat_endpoint(data: ChatRequest, owner: tuple[str, str] = Depends(get_
         db = SessionLocal()
         try:
             db.execute(text("BEGIN IMMEDIATE"))
-            usage = get_usage_snapshot(db, owner[0])
+            usage = get_usage_snapshot(db, owner)
             if not usage["unlimited"]:
                 if usage["chat_count"] >= MESSAGE_LIMIT:
                     raise HTTPException(
@@ -161,8 +153,7 @@ async def chat_endpoint(data: ChatRequest, owner: tuple[str, str] = Depends(get_
                     )
             db.add(Message(
                 user_id=data.chat_id,
-                owner_id=owner[0],
-                device_id=owner[1],
+                owner_id=owner,
                 is_image=bool(data.image_data),
                 role="user",
                 content=user_message,
@@ -207,8 +198,7 @@ async def chat_endpoint(data: ChatRequest, owner: tuple[str, str] = Depends(get_
         try:
             db.add(Message(
                 user_id=data.chat_id,
-                owner_id=owner[0],
-                device_id=owner[1],
+                owner_id=owner,
                 role="assistant",
                 content=ai_reply,
             ))
@@ -224,12 +214,11 @@ async def chat_endpoint(data: ChatRequest, owner: tuple[str, str] = Depends(get_
         raise HTTPException(status_code=500, detail="The AI request failed") from e
 
 @app.get("/sessions")
-async def get_sessions(owner: tuple[str, str] = Depends(get_chat_owner)):
+async def get_sessions(owner: str = Depends(get_chat_owner)):
     db = SessionLocal()
     try:
         data = db.query(Message.user_id, Message.content, Message.created_at, Message.id).filter(
-            Message.owner_id == owner[0],
-            Message.device_id == owner[1],
+            Message.owner_id == owner,
         ).order_by(
             Message.created_at.asc(), Message.id.asc()
         ).all()
@@ -260,13 +249,12 @@ async def get_sessions(owner: tuple[str, str] = Depends(get_chat_owner)):
         db.close()
 
 @app.get("/history/{session_id}")
-async def get_history(session_id: str, owner: tuple[str, str] = Depends(get_chat_owner)):
+async def get_history(session_id: str, owner: str = Depends(get_chat_owner)):
     db = SessionLocal()
     try:
         messages = db.query(Message.role, Message.content).filter(
             Message.user_id == session_id,
-            Message.owner_id == owner[0],
-            Message.device_id == owner[1],
+            Message.owner_id == owner,
         ).order_by(Message.created_at.asc()).all()
         return [{"role": message.role, "content": message.content} for message in messages]
     except Exception as e:
@@ -276,13 +264,12 @@ async def get_history(session_id: str, owner: tuple[str, str] = Depends(get_chat
         db.close()
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str, owner: tuple[str, str] = Depends(get_chat_owner)):
+async def delete_session(session_id: str, owner: str = Depends(get_chat_owner)):
     db = SessionLocal()
     try:
         db.query(Message).filter(
             Message.user_id == session_id,
-            Message.owner_id == owner[0],
-            Message.device_id == owner[1],
+            Message.owner_id == owner,
         ).delete(synchronize_session=False)
         db.commit()
         return {"status": "success"}
@@ -294,16 +281,16 @@ async def delete_session(session_id: str, owner: tuple[str, str] = Depends(get_c
         db.close()
 
 @app.post("/redeem")
-async def redeem_code(data: RedeemRequest, owner: tuple[str, str] = Depends(get_chat_owner)):
+async def redeem_code(data: RedeemRequest, owner: str = Depends(get_chat_owner)):
     if data.code.strip().upper() not in {"KHAN", "FREE"}:
         raise HTTPException(status_code=400, detail="Invalid Redeem Code")
     db = SessionLocal()
     try:
         entitlement = db.query(UserEntitlement).filter(
-            UserEntitlement.owner_id == owner[0]
+            UserEntitlement.owner_id == owner
         ).first()
         if entitlement is None:
-            entitlement = UserEntitlement(owner_id=owner[0], unlimited=True)
+            entitlement = UserEntitlement(owner_id=owner, unlimited=True)
             db.add(entitlement)
         else:
             entitlement.unlimited = True
